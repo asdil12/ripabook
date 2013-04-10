@@ -1,0 +1,109 @@
+#!/usr/bin/python2
+
+from ripabook.cd import CD
+from time import sleep
+from threading import Thread
+import tempfile
+import Queue
+import subprocess
+import os
+import sys
+import argparse
+
+config = {
+	'drive': '/dev/cdrom',
+	'max_queue': 1,
+	'tmp_subdir': '.encoding',
+	'format': 'mp3',
+	'mp3': {
+		'bitrate': 128
+	}
+}
+
+# parse arguments
+parser = argparse.ArgumentParser(description='This tool helps you to rip an audiobook from cd.')
+parser.add_argument('-d', dest='drive', metavar='DRIVE', default=config['drive'], help='Use a specific disk drive')
+parser.add_argument('-f', dest='format', default=config['format'], choices=['mp3', 'ogg'], help='Encoding format')
+parser.add_argument('-m', dest='bitrate', type=int, default=config['mp3']['bitrate'], help='Encoding bitrate (for mp3)')
+parser.add_argument('target', metavar='TARGET', nargs=1, help='The audiobook name (usually in the syntax "author_name.abook_name.de")')
+args = parser.parse_args()
+
+# decode args
+args.target = args.target[0]
+tmp_subdir = os.path.join(args.target, config['tmp_subdir'])
+cd = CD(args.drive)
+encoding_queue = Queue.Queue(maxsize=config['max_queue'])
+
+def wait_cd_ready(always_wait=False):
+	while not cd.ready:
+		if cd.empty and not always_wait:
+			return False
+		sleep(1)
+	return True
+
+def encoder():
+	while True:
+		cdnum, track, tmpfile = encoding_queue.get()
+		filename = "%02d%02d.%s" % (cdnum, track, args.format)
+		outfile = os.path.join(tmp_subdir, filename)
+		if args.format == 'mp3':
+			cmd = ['lame', '-h', '-b', str(args.bitrate), tmpfile.name, outfile]
+		subprocess.call(cmd, stdout=open('/dev/null'), stderr=open('/dev/null'))
+		del tmpfile # delete last reference to auto gb-collect tmpfile
+		encoding_queue.task_done()
+
+
+# do the stuff
+
+# create target folder
+os.mkdir(args.target)
+
+# start encoding worker
+os.mkdir(tmp_subdir)
+t = Thread(target=encoder)
+t.daemon = True
+t.start()
+
+# load first cd
+if cd.empty:
+	cd.tray_open = True
+
+if not cd.ready:
+	print "Insert first disk"
+	wait_cd_ready(always_wait=True)
+
+# start ripping
+cdnum = 1
+while wait_cd_ready():
+	tracks = cd.tracks
+	for track in tracks:
+		print "Ripping CD #%d track [%d/%d]" % (cdnum, track, len(tracks))
+		tmpfile = tempfile.NamedTemporaryFile(prefix='ripabook_', suffix='.wav')
+		cd.ripp(track, tmpfile.name)
+		encoding_queue.put((cdnum, track, tmpfile))
+		del tmpfile # allow early garbage-collect
+	cdnum += 1
+	cd.tray_open = True
+	print "Insert disk #%d or close the empty tray to finish" % cdnum
+
+# wait for encoding to finish
+print "Waiting for encoding thread ... ",
+sys.stdout.flush()
+encoding_queue.join()
+print "DONE"
+
+# renameing
+i = 1
+filelist = os.listdir(tmp_subdir)
+filelist.sort()
+for efile in filelist:
+	ext = efile.split('.')[-1:][0]
+	new_name = "%03d.%s" % (i, ext)
+	print "Moving '%s' --> '%s'" % (efile, new_name)
+	os.rename(os.path.join(tmp_subdir, efile), os.path.join(args.target, new_name))
+	i += 1
+
+# remove encoding subdir
+os.rmdir(tmp_subdir)
+
+print "\nCompleted! - Find your audiobook in '%s'" % os.path.abspath(args.target)
