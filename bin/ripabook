@@ -17,6 +17,9 @@ config = {
 	'format': 'mp3',
 	'mp3': {
 		'bitrate': 128
+	},
+	'ogg': {
+		'quality': 4
 	}
 }
 
@@ -25,6 +28,7 @@ parser = argparse.ArgumentParser(description='This tool helps you to rip an audi
 parser.add_argument('-d', dest='drive', metavar='DRIVE', default=config['drive'], help='Use a specific disk drive')
 parser.add_argument('-f', dest='format', default=config['format'], choices=['mp3', 'ogg'], help='Encoding format')
 parser.add_argument('-m', dest='bitrate', type=int, default=config['mp3']['bitrate'], help='Encoding bitrate (for mp3)')
+parser.add_argument('-q', dest='quality', type=int, default=config['ogg']['quality'], help='Encoding quality (for ogg)')
 parser.add_argument('target', metavar='TARGET', nargs=1, help='The audiobook name (usually in the syntax "author_name.abook_name.de")')
 args = parser.parse_args()
 
@@ -48,6 +52,8 @@ def encoder():
 		outfile = os.path.join(tmp_subdir, filename)
 		if args.format == 'mp3':
 			cmd = ['lame', '-h', '-b', str(args.bitrate), tmpfile.name, outfile]
+		elif args.format == 'ogg':
+			cmd = ['oggenc', '-q', str(args.quality), '-o', outfile, tmpfile.name]
 		subprocess.call(cmd, stdout=open('/dev/null'), stderr=open('/dev/null'))
 		del tmpfile # delete last reference to auto gb-collect tmpfile
 		encoding_queue.task_done()
